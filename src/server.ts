@@ -18,6 +18,8 @@ import { promisify } from 'util';
 import { createHash, randomUUID } from 'crypto';
 import { config, AVAILABLE_MODELS } from './config/index.js';
 import { resolveModels } from './config/provider-models.js';
+import { config } from './config/index.js';
+import { initProxyFromConfig, configureProxy, getProxyStatus, checkIp, invalidateIpCache } from './net/proxy.js';
 import { redactString, redactLedgerText, redactSecrets } from './redact.js';
 import { LLMBackbone } from './llm/index.js';
 import { TempestCommand } from './index.js';
@@ -4874,6 +4876,42 @@ app.get('/api/mission-context/latest', (_req: Request, res: Response) => {
   res.json(latestMissionContext());
 });
 
+// =============================================================================
+// OUTBOUND PROXY (SOCKS5) + EGRESS IP CHECK
+// The War Room routes probe/attack fetch() through a SOCKS5 proxy so tests don't
+// leave from the operator's own IP. These endpoints drive the top-right IP badge
+// and the Settings proxy field. See src/net/proxy.ts.
+// =============================================================================
+
+// Current proxy config (credential-redacted).
+app.get('/api/net/proxy', (_req: Request, res: Response) => {
+  res.json({ ...getProxyStatus(), configured: Boolean(config.getProxyUrl()) });
+});
+
+// Set/clear the proxy. Body: { url: 'socks5://[user:pass@]host:port' } or { url: '' }.
+// Persists to config and installs the global dispatcher live (no restart needed).
+app.post('/api/net/proxy', (req: Request, res: Response): void => {
+  const url = typeof req.body?.url === 'string' ? req.body.url.trim() : '';
+  const result = configureProxy(url || null);
+  if (result.error) {
+    res.status(400).json({ error: result.error, ...result });
+    return;
+  }
+  config.setProxyUrl(url);
+  invalidateIpCache();
+  res.json({ ok: true, ...result });
+});
+
+// Egress IP + leak check (exit IP through proxy vs. real IP direct). Drives the badge.
+app.get('/api/net/ip', async (req: Request, res: Response): Promise<void> => {
+  const force = /^(1|true|yes)$/i.test(String(req.query.force || ''));
+  try {
+    res.json(await checkIp(force));
+  } catch (e) {
+    res.status(502).json({ error: `IP check failed: ${String((e as Error)?.message || e)}` });
+  }
+});
+
 app.get('/api/arsenal/catalog', (req: Request, res: Response) => {
   const family = typeof req.query.family === 'string' ? normalizeMissionFamily(req.query.family, 'web_api') : undefined;
   const category = typeof req.query.category === 'string' ? req.query.category : '';
@@ -7971,6 +8009,18 @@ async function startServer() {
   console.log('');
 
   await loadPersistedState();
+
+  // Install the outbound SOCKS5 proxy (if TEMPEST_PROXY_URL / saved settings define one)
+  // BEFORE anything makes outbound calls, so all test/attack fetch() egress is covered.
+  const proxyStatus = initProxyFromConfig();
+  if (proxyStatus.enabled) {
+    console.log(`[T3MP3ST] Outbound proxy ENABLED → ${proxyStatus.url} (loopback bypassed)`);
+  } else if (proxyStatus.error) {
+    console.warn(`[T3MP3ST] Outbound proxy misconfigured, egress is DIRECT: ${proxyStatus.error}`);
+  } else {
+    console.log('[T3MP3ST] Outbound proxy disabled — egress from local IP.');
+  }
+
   llm = await initLLM();
 
   // Load multi-language grammars once, before any white-box ingest request.

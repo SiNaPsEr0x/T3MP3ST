@@ -125,6 +125,9 @@
     "tree-sitter-wasms": "0.1.13",
     "tsx": "^4.7.0",
     "web-tree-sitter": "0.25.10"
+    "socks": "^2.8.9",
+    "tsx": "^4.7.0",
+    "undici": "^8.7.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.2",

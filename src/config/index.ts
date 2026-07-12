@@ -109,6 +109,10 @@ export interface TempestSettings {
     colorOutput: boolean;
     verboseLogging: boolean;
   };
+
+  // Outbound SOCKS5 proxy for test/attack traffic (socks5://[user:pass@]host:port).
+  // Empty/unset = egress from the operator's own IP. See src/net/proxy.ts.
+  proxyUrl?: string;
 }
 
 // =============================================================================
@@ -186,6 +190,8 @@ const DEFAULT_SETTINGS: TempestSettings = {
     colorOutput: true,
     verboseLogging: false,
   },
+
+  proxyUrl: '',
 };
 
 export function migrateLegacyDeepSeekSettings(
@@ -691,6 +697,21 @@ class ConfigManager {
     const apiKeys = this.config.get('apiKeys');
     apiKeys[provider] = key;
     this.config.set('apiKeys', apiKeys);
+  }
+
+  /**
+   * Outbound SOCKS5 proxy URL for test/attack traffic. Env TEMPEST_PROXY_URL wins over
+   * the saved value; returns '' when egress should leave from the operator's own IP.
+   */
+  getProxyUrl(): string {
+    const env = process.env.TEMPEST_PROXY_URL?.trim();
+    if (env) return env;
+    return (this.config.get('proxyUrl') || '').trim();
+  }
+
+  /** Persist the proxy URL (pass '' to clear). Does NOT install it — see net/proxy. */
+  setProxyUrl(url: string): void {
+    this.config.set('proxyUrl', (url || '').trim());
   }
 
   /**

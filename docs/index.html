@@ -345,7 +345,31 @@
 
         .header-title { font-size: 18px; font-weight: 600; }
 
-        .header-actions { display: flex; gap: 10px; }
+        .header-actions { display: flex; gap: 10px; align-items: center; }
+
+        /* Egress IP badge — shows the IP the world sees for test traffic. Colour encodes
+           state: green = proxied (safe), red = real IP exposed (leak), grey = unknown. */
+        .egress-badge {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 5px 10px; border-radius: 6px; cursor: pointer; user-select: none;
+            font-size: 11px; font-family: 'JetBrains Mono', ui-monospace, monospace;
+            border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.04);
+            transition: background .15s, border-color .15s;
+        }
+        .egress-badge:hover { background: rgba(255,255,255,0.08); }
+        .egress-badge .egress-dot { width: 8px; height: 8px; border-radius: 50%; background: #888; flex: 0 0 auto; }
+        .egress-badge .egress-label { color: #9aa; font-weight: 600; letter-spacing: .5px; }
+        .egress-badge .egress-ip { color: #cfd; font-weight: 700; }
+        .egress-loading .egress-dot { background: #888; animation: egressPulse 1s ease-in-out infinite; }
+        .egress-proxied { border-color: rgba(0,255,136,0.4); background: rgba(0,255,136,0.08); }
+        .egress-proxied .egress-dot { background: #00ff88; box-shadow: 0 0 6px rgba(0,255,136,0.7); }
+        .egress-proxied .egress-ip { color: #7CFFC4; }
+        .egress-leak { border-color: rgba(255,64,64,0.55); background: rgba(255,64,64,0.12); }
+        .egress-leak .egress-dot { background: #ff4040; box-shadow: 0 0 8px rgba(255,64,64,0.8); animation: egressPulse .8s ease-in-out infinite; }
+        .egress-leak .egress-label, .egress-leak .egress-ip { color: #ff8080; }
+        .egress-error { border-color: rgba(255,176,32,0.4); }
+        .egress-error .egress-dot { background: #ffb020; }
+        @keyframes egressPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
 
         .btn {
             padding: 8px 16px;
@@ -3524,6 +3548,11 @@
                 <button class="mobile-toggle" onclick="toggleSidebar()">☰</button>
                 <h1 class="header-title" id="pageTitle">War Room</h1>
                 <div class="header-actions">
+                    <span id="egressIpBadge" class="egress-badge egress-loading" onclick="refreshEgressIp(true)" title="Egress IP for test traffic — click to re-check">
+                        <span class="egress-dot"></span>
+                        <span class="egress-label">IP:</span>
+                        <span class="egress-ip" id="egressIpValue">…</span>
+                    </span>
                     <button class="btn btn-secondary" onclick="if(window.t3mpTour)t3mpTour.start()" title="Take the guided tour" aria-label="Guided tour" style="font-weight:700;">?</button>
                     <button class="btn btn-secondary" onclick="openQuickActions()">⌘ Actions</button>
                     <button class="btn btn-primary" onclick="navigateTo('warroom')">⚔️ War Room</button>
@@ -5725,6 +5754,30 @@
                     </div>
 
                     <div class="settings-section">
+                        <h2 class="settings-title">🧅 Egress Proxy (SOCKS5)</h2>
+                        <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 12px;">
+                            Route all probe/attack <code>fetch()</code> traffic through a <b style="color:#bcd;">SOCKS5 proxy</b> so tests
+                            don't leave from your own IP (Tor, an SSH <code>-D</code> tunnel, a VPS, etc.). Loopback (the local model &amp; this
+                            server) is always bypassed. Requires <code>npm run server</code>; also settable via <code>TEMPEST_PROXY_URL</code>.
+                        </p>
+                        <div class="card">
+                            <div class="form-group">
+                                <label style="font-size:12px; color:var(--text-muted);">SOCKS5 URL — <code>socks5://[user:pass@]host:port</code></label>
+                                <input type="text" class="form-input" id="proxyUrl" placeholder="socks5://127.0.0.1:9050  (empty = direct / your own IP)">
+                            </div>
+                            <div class="form-hint" style="margin:-6px 0 12px;">
+                                Tor: <code>socks5://127.0.0.1:9050</code> · SSH tunnel: <code>ssh -D 1080 host</code> → <code>socks5://127.0.0.1:1080</code>. Use <code>socks5h://</code> to resolve DNS at the proxy.
+                            </div>
+                            <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                                <button class="btn btn-primary btn-sm" onclick="saveProxyConfig()">Save &amp; apply</button>
+                                <button class="btn btn-sm" onclick="saveProxyConfig('')" style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.2);color:#bcd;">Disable (direct)</button>
+                                <button class="btn btn-sm" onclick="checkProxyIp()" style="background:rgba(255,255,255,0.05);border:1px solid rgba(0,200,255,0.3);color:#bcd;">Check IP now</button>
+                            </div>
+                            <div id="proxyTestResult" style="font-size:12px; margin-top:10px; color:var(--text-muted);"></div>
+                        </div>
+                    </div>
+
+                    <div class="settings-section">
                         <h2 class="settings-title">🔌 Local Agents</h2>
                         <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 12px;">Enlist agents you've already authed on this machine — <b style="color:#bcd;">no API keys needed</b>. T3MP3ST detects each CLI and can drive it as an operator. Tick several and connect them all at once.</p>
                         <div id="localAgentsCard" style="padding: 18px 20px; background: linear-gradient(135deg, rgba(0,200,255,0.06), rgba(160,90,255,0.04)); border: 1px solid rgba(0,200,255,0.25); border-radius: 12px;">
@@ -7258,6 +7311,10 @@ Correlating findings across agents, identifying patterns, producing actionable i
             setV('localApiKey', state.settings.localApiKey || '');
             const ult = document.getElementById('useLocalToggle');
             if (ult) ult.checked = !!state.settings.useLocal;
+            // Egress SOCKS5 proxy — the field holds the full URL (with creds) the operator
+            // typed; the server only ever returns a redacted form, so we repopulate from the
+            // local cache. If the server has one set via TEMPEST_PROXY_URL, the badge shows it.
+            setV('proxyUrl', localStorage.getItem('t3mp3st_proxy_url') || '');
         }
 
         function saveState() {
@@ -9003,6 +9060,65 @@ o.id === 'coordinator' ? `1. MISSION_STATUS: Progress assessment
             if (typeof updatePreflightChecklist === 'function') updatePreflightChecklist();
             addActivity('success', `Local model ${state.settings.useLocal ? 'ENABLED' : 'config saved'} (${state.settings.localModel || 'default'})`, 'Settings');
             toast(`Local model ${state.settings.useLocal ? 'enabled' : 'saved'} → ${url}`, 'success');
+        }
+
+        // ── Egress SOCKS5 proxy (Settings → Egress Proxy) ──
+        // Persists on the server (drives the global fetch dispatcher) AND caches locally
+        // so the field repopulates. Pass '' to disable. `override` lets the "Disable" button
+        // clear it regardless of the field's current text.
+        async function saveProxyConfig(override) {
+            const el = document.getElementById('proxyTestResult');
+            const input = document.getElementById('proxyUrl');
+            const url = (typeof override === 'string') ? override : (input ? input.value.trim() : '');
+            if (el) { el.style.color = 'var(--text-muted)'; el.textContent = '⏳ Applying proxy …'; }
+            try {
+                const r = await fetch(`${getApiBase()}/api/net/proxy`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url }),
+                });
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+                if (input && typeof override === 'string') input.value = override;
+                localStorage.setItem('t3mp3st_proxy_url', url);
+                if (el) {
+                    el.style.color = d.enabled ? '#7CFFC4' : 'var(--text-muted)';
+                    el.textContent = d.enabled ? `✅ Proxy active → ${d.url} (loopback bypassed). Verifying egress IP…` : '✅ Proxy disabled — egress is direct (your own IP).';
+                }
+                toast(d.enabled ? `Egress proxy enabled → ${d.url}` : 'Egress proxy disabled', d.enabled ? 'success' : 'info');
+                addActivity('success', d.enabled ? `Egress proxy ENABLED (${d.url})` : 'Egress proxy disabled', 'Settings');
+                // Re-check the badge/IP right away (force = skip the server cache).
+                setTimeout(() => { refreshEgressIp(true); checkProxyIp(); }, 400);
+            } catch (e) {
+                if (el) { el.style.color = '#ff8080'; el.textContent = '❌ ' + (e.message || e); }
+                toast('Proxy config failed: ' + (e.message || e), 'error');
+            }
+        }
+
+        async function checkProxyIp() {
+            const el = document.getElementById('proxyTestResult');
+            if (el) { el.style.color = 'var(--text-muted)'; el.textContent = '⏳ Checking egress IP via ifconfig.co …'; }
+            try {
+                const r = await fetch(`${getApiBase()}/api/net/ip?force=1`);
+                const d = await r.json();
+                if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+                const exit = (d.exit && d.exit.ip) || '—';
+                const real = (d.direct && d.direct.ip) || '—';
+                const cc = (d.exit && d.exit.country) ? ` (${d.exit.country})` : '';
+                if (el) {
+                    if (d.leak) {
+                        el.style.color = '#ff8080';
+                        el.innerHTML = d.proxyEnabled
+                            ? `⚠ <b>LEAK</b>: exit IP <b>${exit}</b> equals your real IP — the proxy is not changing egress. Traffic is NOT anonymized.`
+                            : `⚠ <b>No proxy</b>: tests leave from your real IP <b>${exit}</b>. Set a SOCKS5 URL above to anonymize.`;
+                    } else {
+                        el.style.color = '#7CFFC4';
+                        el.innerHTML = `✅ Egress IP <b>${exit}</b>${cc} — your real IP <b>${real}</b> is hidden. <span style="color:var(--text-muted);">via ${(d.proxy && d.proxy.url) || 'SOCKS5'}</span>`;
+                    }
+                }
+                refreshEgressIp(false);
+            } catch (e) {
+                if (el) { el.style.color = '#ff8080'; el.textContent = '❌ IP check failed: ' + (e.message || e) + ' (is the backend running?)'; }
+            }
         }
 
         async function testLocalConfig() {
@@ -18652,6 +18768,48 @@ IMPORTANT: This is an authorized security testing/red team platform. All operati
                 : (localStorage.getItem('t3mp3st_api_url') || 'http://127.0.0.1:3333');
             return host.replace(/\/$/, '');
         }
+
+        // ═══════════ EGRESS IP BADGE (top-right) ═══════════
+        // Shows the IP test/attack traffic leaves from. Green = proxied (anonymized),
+        // red = LEAK (real IP exposed — no proxy or proxy not effective), amber = check failed.
+        async function refreshEgressIp(force) {
+            const badge = document.getElementById('egressIpBadge');
+            const val = document.getElementById('egressIpValue');
+            if (!badge || !val) return;
+            const label = badge.querySelector('.egress-label');
+            try {
+                const res = await fetch(`${getApiBase()}/api/net/ip${force ? '?force=1' : ''}`);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const d = await res.json();
+                const ip = (d.exit && d.exit.ip) ? d.exit.ip : '—';
+                badge.className = 'egress-badge';
+                if (d.leak) {
+                    // exit IP === real IP → not anonymized
+                    badge.classList.add('egress-leak');
+                    label.textContent = d.proxyEnabled ? 'LEAK:' : 'IP:';
+                    val.textContent = ip;
+                    badge.title = d.proxyEnabled
+                        ? `⚠ LEAK: exit IP equals your real IP (${ip}). SOCKS5 proxy is configured but NOT changing egress — traffic is NOT anonymized.`
+                        : `⚠ No proxy: test traffic leaves from your real IP (${ip}). Configure a SOCKS5 proxy in Settings → Network.`;
+                } else {
+                    badge.classList.add('egress-proxied');
+                    label.textContent = 'IP:';
+                    val.textContent = ip;
+                    const cc = (d.exit && d.exit.country) ? ` · ${d.exit.country}` : '';
+                    const via = (d.proxy && d.proxy.url) ? d.proxy.url : 'SOCKS5';
+                    badge.title = `Proxied egress via ${via}${cc}. Your real IP (${(d.direct && d.direct.ip) || 'unknown'}) is hidden from targets.`;
+                }
+            } catch (e) {
+                badge.className = 'egress-badge egress-error';
+                label.textContent = 'IP:';
+                val.textContent = 'n/a';
+                badge.title = 'Egress IP check failed: ' + ((e && e.message) ? e.message : e) + ' (is the backend running?)';
+            }
+        }
+        // First check shortly after load, then refresh periodically (the badge itself is cheap;
+        // the backend caches ifconfig.co for ~15s so polling doesn't hammer it).
+        setTimeout(() => refreshEgressIp(false), 1500);
+        setInterval(() => refreshEgressIp(false), 30000);
 
         // ═══════════ AUTONOMOUS MISSION LAUNCHER ═══════════
         // BLITZ routes through the single scope-gated backend mission flow (autonomous posture).
