@@ -873,7 +873,17 @@ class ConfigManager {
       baseUrl,
       maxTokens: this.config.get('maxTokens'),
       temperature: this.config.get('temperature'),
-      timeout: this.config.get('timeout'),
+      // Local inference is far slower than cloud APIs, so it must not inherit the cloud-tuned
+      // default timeout: floor it at 120s (matching the frontend llmTimeoutFor) and let the
+      // operator override via TEMPEST_LOCAL_TIMEOUT for very slow reasoning models.
+      timeout: actualProvider === 'local'
+        ? ((): number => {
+            const parsed = Number(process.env.TEMPEST_LOCAL_TIMEOUT);
+            return Number.isFinite(parsed) && parsed > 0
+              ? parsed
+              : Math.max(Number(this.config.get('timeout')) || 0, 120000);
+          })()
+        : this.config.get('timeout'),
       fallbackChain: this.buildFallbackChain(actualProvider),
     };
   }
