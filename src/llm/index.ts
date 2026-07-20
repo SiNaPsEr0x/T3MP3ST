@@ -19,6 +19,7 @@ import { join } from 'path';
 import type { LLMConfig, LLMMessage, LLMResponse, LLMProvider, LLMToolDefinition, LLMToolCall, FallbackEntry } from '../types/index.js';
 import { config } from '../config/index.js';
 import { localAgentChat } from '../agent/local-agents.js';
+import { fetchBypassingProxy } from '../net/proxy.js';
 
 // =============================================================================
 // LLM EVENTS
@@ -117,6 +118,8 @@ interface AnthropicResponse {
 interface OllamaResponse {
   message?: {
     content?: string;
+    reasoning_content?: string;
+    reasoning?: string;
     /** Native function calls returned by the model (Ollama /api/chat with tools). */
     tool_calls?: Array<{
       function: {
@@ -125,7 +128,6 @@ interface OllamaResponse {
       };
     }>;
   };
-  message?: { content?: string; reasoning_content?: string; reasoning?: string };
   model?: string;
   prompt_eval_count?: number;
   eval_count?: number;
@@ -941,6 +943,8 @@ class LocalAdapter implements LLMProviderAdapter {
       requestBody.tools = openaiWire
         ? this.formatOpenAITools(options.tools)
         : this.formatOllamaTools(options.tools);
+    }
+
     // Combine our own timeout with an external signal (e.g. the Express request's 'close'
     // event) so an operator cancelling mid-flight — or the client simply disconnecting —
     // actually stops generation on the local server, instead of leaving it to grind through
@@ -961,12 +965,10 @@ class LocalAdapter implements LLMProviderAdapter {
         // expect *some* bearer — send a dummy unless the operator set a real key.
         ...(openaiWire ? { Authorization: `Bearer ${this.config.apiKey || 'local'}` } : {}),
       };
-      const makeSignal = () => AbortSignal.timeout(this.config.timeout || 120000);
-      let response = await fetch(url, {
+      let response = await fetchBypassingProxy(url, {
         method: 'POST',
         headers,
         body: JSON.stringify(requestBody),
-        signal: makeSignal(),
         signal: controller.signal,
       });
 
@@ -976,11 +978,11 @@ class LocalAdapter implements LLMProviderAdapter {
       if (!response.ok && tryNative && this.config.nativeTools !== true) {
         delete requestBody.tools;
         this.cacheProbeResult(false);
-        response = await fetch(url, {
+        response = await fetchBypassingProxy(url, {
           method: 'POST',
           headers,
           body: JSON.stringify(requestBody),
-          signal: makeSignal(),
+          signal: controller.signal,
         });
       }
 
@@ -992,8 +994,15 @@ class LocalAdapter implements LLMProviderAdapter {
       }
 
       const data = await response.json() as OllamaResponse & {
-        choices?: Array<{ message?: { content?: string; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } }>;
-        choices?: Array<{ message?: { content?: string; reasoning_content?: string; reasoning?: string }; finish_reason?: string }>;
+        choices?: Array<{
+          message?: {
+            content?: string;
+            reasoning_content?: string;
+            reasoning?: string;
+            tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+          };
+          finish_reason?: string;
+        }>;
         usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
       };
       // Salvage reasoning-model output: extractLocalContent falls back to

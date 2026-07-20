@@ -47,6 +47,25 @@ const directDispatcher = new Agent({ connect: { timeout: 10_000, autoSelectFamil
 let currentUrl: string | null = null;
 let enabled = false;
 
+/**
+ * Fetch without the configured attack-traffic proxy.
+ *
+ * Local model servers commonly live on RFC1918 addresses or private DNS names, not
+ * just localhost. Giving those calls an explicit direct dispatcher avoids both
+ * proxy leakage and brittle hostname heuristics/DNS races.
+ */
+export function directFetch(input: Parameters<typeof undiciFetch>[0], init: Parameters<typeof undiciFetch>[1] = {}) {
+  return undiciFetch(input, { ...init, dispatcher: directDispatcher });
+}
+
+/** Keep ordinary global fetch semantics unless a proxy is active (important for callers/tests that instrument fetch). */
+export function fetchBypassingProxy(
+  input: Parameters<typeof undiciFetch>[0],
+  init: Parameters<typeof undiciFetch>[1] = {},
+) {
+  return enabled ? directFetch(input, init) : globalThis.fetch(input as any, init as any);
+}
+
 // ── url parsing ──────────────────────────────────────────────────────────────
 /**
  * Parse socks5://[user:pass@]host:port (also socks5h:// and socks4://).

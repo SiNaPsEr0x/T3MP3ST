@@ -18,7 +18,6 @@ import { promisify } from 'util';
 import { createHash, randomUUID } from 'crypto';
 import { config, AVAILABLE_MODELS } from './config/index.js';
 import { resolveModels } from './config/provider-models.js';
-import { config } from './config/index.js';
 import { initProxyFromConfig, configureProxy, getProxyStatus, checkIp, invalidateIpCache } from './net/proxy.js';
 import { redactString, redactLedgerText, redactSecrets } from './redact.js';
 import { LLMBackbone } from './llm/index.js';
@@ -6273,8 +6272,6 @@ app.post('/api/mission/start', async (req: Request, res: Response): Promise<void
     apiKey,
     provider,
     model,
-    provider = 'openrouter',
-    model = 'anthropic/claude-sonnet-4',
     baseUrl, // local provider only: the operator's llama.cpp / Ollama host
     // OPTIONAL white-box source: an absolute path to a LOCAL repo you own. When
     // present, we ingest + security-rank it and hand the packed source to the
@@ -6288,29 +6285,11 @@ app.post('/api/mission/start', async (req: Request, res: Response): Promise<void
   // SECURITY NOTE: apiKey is read from the request body (Authorization header is
   // preferred). Kept body-accepted for the same-origin UI; only reachable from
   // the local operator (loopback bind + origin guard). Header move is out of scope.
-  const missionLLMConfig = resolveGeneralLLMConfig(provider, model, apiKey);
+  const missionLLMConfig = baseUrl === undefined
+    ? resolveGeneralLLMConfig(provider, model, apiKey)
+    : resolveGeneralLLMConfig(provider, model, apiKey, baseUrl);
   const effectiveKey = missionLLMConfig.apiKey;
   if (providerNeedsApiKey(missionLLMConfig.provider) && !effectiveKey) {
-  // A per-request base URL is honored ONLY for the local provider (the operator's own
-  // llama.cpp / Ollama host); validate its shape (http(s) only).
-  let localBaseUrl: string | undefined;
-  if (provider === 'local') {
-    const bu = sanitizeLocalBaseUrl(baseUrl);
-    if (!bu.ok) { res.status(400).json({ error: bu.error }); return; }
-    localBaseUrl = bu.value || undefined;
-  }
-
-  // Use provided apiKey or fall back to server-configured one. Local-agent backends
-  // (Claude Code / Codex / Hermes) need NO key — the agent uses its own login.
-  // SECURITY NOTE: apiKey is read from the request body (Authorization header is
-  // preferred). Kept body-accepted for the same-origin UI; only reachable from
-  // the local operator (loopback bind + origin guard). Header move is out of scope.
-  // SECURITY: when the client picks the local base URL, never fall back to the
-  // server-configured key — a server secret must not reach a client-chosen host.
-  const effectiveKey = (provider === 'local' && localBaseUrl)
-    ? apiKey
-    : (apiKey || config.getLLMConfig().apiKey);
-  if (providerNeedsApiKey(provider) && !effectiveKey) {
     res.status(400).json({ error: 'API key required — pass apiKey, configure one on the server, or connect a local agent (Claude Code / Codex / Hermes)' });
     return;
   }
@@ -6347,8 +6326,13 @@ app.post('/api/mission/start', async (req: Request, res: Response): Promise<void
   }
 
   try {
-    const cmd = createTempestCommandInstance(name, effectiveKey, missionLLMConfig.provider, missionLLMConfig.model);
-    const cmd = createTempestCommandInstance(name, effectiveKey, provider, model, localBaseUrl);
+    const cmd = createTempestCommandInstance(
+      name,
+      effectiveKey,
+      missionLLMConfig.provider,
+      missionLLMConfig.model,
+      missionLLMConfig.baseUrl,
+    );
 
     // Add targets
     for (const t of targets) {
@@ -6823,8 +6807,7 @@ function readGeneralTimeoutEnv(): number | undefined {
 // the key in the body, so we accept it to avoid breaking it. Moving to a header
 // needs a coordinated UI change and is out of scope. The body key is only ever
 // reachable from the local operator (loopback bind + origin guard).
-function resolveGeneralLLMConfig(provider: string | undefined, model: string | undefined, apiKey: string | undefined): {
-function resolveGeneralLLMConfig(provider: string, model: string | undefined, apiKey: string | undefined, baseUrl?: string): {
+function resolveGeneralLLMConfig(provider: string | undefined, model: string | undefined, apiKey: string | undefined, baseUrl?: string): {
   provider: any;
   model: string;
   apiKey?: string;
@@ -6872,9 +6855,9 @@ function resolveGeneralLLMConfig(provider: string, model: string | undefined, ap
     model: model || baseConfig.model,
     apiKey: effectiveKey,
     baseUrl: baseConfig.baseUrl,
-    // Only surface a baseUrl for the local provider (override → env default). Cloud
-    // providers keep their own per-provider base URL inside LLMBackbone.
-    baseUrl: selectedProvider === 'local' ? (localBaseUrl ?? baseConfig.baseUrl) : undefined,
+    // Only override the configured URL for a local provider. Cloud providers keep
+    // their own provider URL and cannot be redirected by a request.
+    ...(selectedProvider === 'local' && localBaseUrl ? { baseUrl: localBaseUrl } : {}),
     maxTokens: 8192,
     temperature: 0.4,
     timeout: readGeneralTimeoutEnv() ?? 300000, // General planning needs room (was a hardcoded 60s); override via env
@@ -7141,8 +7124,6 @@ app.post('/api/general/plan', async (req: Request, res: Response): Promise<void>
     apiKey,
     provider,
     model,
-    provider = 'openrouter',
-    model = 'anthropic/claude-sonnet-4',
     baseUrl, // local provider only: the operator's llama.cpp / Ollama host
   } = req.body;
 
@@ -7218,8 +7199,6 @@ app.post('/api/general/execute', async (req: Request, res: Response): Promise<vo
     apiKey,
     provider,
     model,
-    provider = 'openrouter',
-    model = 'anthropic/claude-sonnet-4',
     baseUrl, // local provider only: the operator's llama.cpp / Ollama host
   } = req.body;
 
@@ -7335,8 +7314,6 @@ app.post('/api/general/auto', async (req: Request, res: Response): Promise<void>
     apiKey,
     provider,
     model,
-    provider = 'openrouter',
-    model = 'anthropic/claude-sonnet-4',
     baseUrl, // local provider only: the operator's llama.cpp / Ollama host
   } = req.body;
 
@@ -7596,8 +7573,6 @@ import { Admiral, briefToDirective, type ChatMsg, type MissionBrief } from './ad
  */
 app.post('/api/admiral/converse', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { messages, provider, model, apiKey } = req.body as {
-      messages: ChatMsg[]; provider?: string; model?: string; apiKey?: string;
     const { messages, provider = 'openrouter', model, apiKey, baseUrl } = req.body as {
       messages: ChatMsg[]; provider?: string; model?: string; apiKey?: string; baseUrl?: string;
     };
@@ -7628,8 +7603,6 @@ app.post('/api/admiral/converse', async (req: Request, res: Response): Promise<v
  */
 app.post('/api/admiral/suggest', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { operatorPrompt, archetype, failureSignal, provider, model, apiKey } = req.body as {
-      operatorPrompt?: string; archetype?: string; failureSignal?: string; provider?: string; model?: string; apiKey?: string;
     const { operatorPrompt, archetype, failureSignal, provider = 'openrouter', model, apiKey, baseUrl } = req.body as {
       operatorPrompt?: string; archetype?: string; failureSignal?: string; provider?: string; model?: string; apiKey?: string; baseUrl?: string;
     };
@@ -7665,8 +7638,6 @@ app.post('/api/admiral/suggest', async (req: Request, res: Response): Promise<vo
  */
 app.post('/api/admiral/launch', async (req: Request, res: Response): Promise<void> => {
   try {
-    const { brief, confirmed, provider, model, apiKey } = req.body as {
-      brief: MissionBrief; confirmed?: boolean; provider?: string; model?: string; apiKey?: string;
     const { brief, confirmed, provider = 'openrouter', model, apiKey, baseUrl } = req.body as {
       brief: MissionBrief; confirmed?: boolean; provider?: string; model?: string; apiKey?: string; baseUrl?: string;
     };
@@ -7850,7 +7821,6 @@ type ConnectedLocalAgent = {
 };
 const connectedLocalAgents = new Map<string, ConnectedLocalAgent>();
 const LOCAL_AGENT_HEALTH_TTL_MS = 30_000;
-const LOCAL_AGENT_HEALTH_TIMEOUT_MS = 45_000;
 // A 15s liveness probe SIGKILLs a slow-but-alive local reasoning agent (which spends tens of
 // seconds thinking even on the trivial PONG probe), making requireLiveLocalAgent falsely reject
 // a healthy backend. Default to 90s and let the operator raise it via env for very slow models.

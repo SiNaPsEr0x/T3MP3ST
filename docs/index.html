@@ -19639,32 +19639,11 @@ IMPORTANT: This is an authorized security testing/red team platform. All operati
                 addMissionLog('info', 'Mode: BACKEND DISPATCH (real operators)');
                 setFidelity('live', target);
 
-                // Determine the LLM backend. Priority: a configured API key → its provider; else a
-                // connected local agent (Claude Code / Codex / Hermes) which needs NO key (uses its own
-                // login); else fall through to the server's own configured LLM.
+                // Determine the LLM backend. A selected local model wins; otherwise
+                // use a connected agent, infer a keyed provider, or defer to the
+                // server-configured default when the browser has no credentials.
                 let provider;
                 let model;
-                const agentBackend = (!apiKey && typeof window.t3mpPreferredAgent === 'function') ? window.t3mpPreferredAgent() : null;
-                if (!apiKey && agentBackend) {
-                    provider = 'local-agent';
-                    model = agentBackend; // the agent id (codex|claude|hermes) travels in `model`
-                    addIntel('BACKEND', `No API key — routing the mission through your connected agent: ${agentBackend.toUpperCase()}`, 'success');
-                    addMissionLog('info', `LLM backend: local agent (${agentBackend}) — no API key needed`);
-                } else if (!apiKey) {
-                    addIntel('BACKEND', 'No browser API key — using the server-configured LLM backend', 'success');
-                    addMissionLog('info', 'LLM backend: server default — no browser API key sent');
-                } else if (apiKey && apiKey.startsWith('sk-ant-')) {
-                    provider = 'anthropic';
-                    model = state.settings.selectedModel || 'anthropic/claude-sonnet-4';
-                    model = model.replace('anthropic/', ''); // Anthropic API doesn't use prefix
-                } else if (apiKey && apiKey.startsWith('sk-') && !apiKey.startsWith('sk-ant-') && !apiKey.startsWith('sk-or-')) {
-                    provider = 'openai';
-                    model = state.settings.selectedModel || 'anthropic/claude-sonnet-4';
-                } else {
-                    provider = 'openrouter';
-                    model = state.settings.selectedModel || 'anthropic/claude-sonnet-4';
-                let provider = 'openrouter';
-                let model = state.settings.selectedModel || 'anthropic/claude-sonnet-4';
                 if (state.settings?.useLocal) {
                     // Local model (llama.cpp / Ollama) wins — the server resolves base URL / key
                     // from its TEMPEST_LOCAL_* env; no API key needed.
@@ -19679,11 +19658,19 @@ IMPORTANT: This is an authorized security testing/red team platform. All operati
                         model = agentBackend; // the agent id (codex|claude|hermes) travels in `model`
                         addIntel('BACKEND', `No API key — routing the mission through your connected agent: ${agentBackend.toUpperCase()}`, 'success');
                         addMissionLog('info', `LLM backend: local agent (${agentBackend}) — no API key needed`);
+                    } else if (!apiKey) {
+                        addIntel('BACKEND', 'No browser API key — using the server-configured LLM backend', 'success');
+                        addMissionLog('info', 'LLM backend: server default — no browser API key sent');
                     } else if (apiKey && apiKey.startsWith('sk-ant-')) {
                         provider = 'anthropic';
+                        model = state.settings.selectedModel || 'anthropic/claude-sonnet-4';
                         model = model.replace('anthropic/', ''); // Anthropic API doesn't use prefix
                     } else if (apiKey && apiKey.startsWith('sk-') && !apiKey.startsWith('sk-ant-') && !apiKey.startsWith('sk-or-')) {
                         provider = 'openai';
+                        model = state.settings.selectedModel || 'anthropic/claude-sonnet-4';
+                    } else {
+                        provider = 'openrouter';
+                        model = state.settings.selectedModel || 'anthropic/claude-sonnet-4';
                     }
                 }
 
