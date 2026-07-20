@@ -1,0 +1,16 @@
+version: 2
+secret:
+  ignored-matches:
+    # Deliberately fake secret used as a "dirty" fixture to verify the
+    # mobile-static secret-detection benchmark catches hardcoded Google API
+    # keys. Not a real, usable credential. Flagged by GitGuardian incident
+    # on commit 5a12593 (Google API Key).
+    - name: bench-mobile-static-fake-google-api-key
+      match: AIzaSyD-EXAMPLEfakeKEY1234567890abcdEFG
+
+  ignored-paths:
+    # Benchmark/CTF corpora intentionally contain fake credentials as test
+    # fixtures for the secret-detection and vuln-hunting benchmarks; they
+    # are not real, live secrets.
+    - "bench/**"
+    - "src/__tests__/fixtures/**"

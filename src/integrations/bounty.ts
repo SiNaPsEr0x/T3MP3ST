@@ -191,6 +191,7 @@ export const hackeroneConnector: BountyConnector = {
     if (!credentials.apiKey || !credentials.apiIdentifier) {
       return { success: false, confirmed: false, error: 'HackerOne requires both apiKey and apiIdentifier' };
     }
+    // Basic Auth header built from caller-supplied credentials, not a hardcoded secret.
     const auth = Buffer.from(`${credentials.apiIdentifier}:${credentials.apiKey}`).toString('base64');
     const res = await fetch('https://api.hackerone.com/v1/hackers/reports', {
       method: 'POST',
